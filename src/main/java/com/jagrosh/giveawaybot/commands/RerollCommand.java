@@ -18,8 +18,8 @@ package com.jagrosh.giveawaybot.commands;
 import com.jagrosh.giveawaybot.Bot;
 import com.jagrosh.giveawaybot.Constants;
 import com.jagrosh.giveawaybot.entities.Giveaway;
-import com.jagrosh.jdautilities.commandclient.Command;
-import com.jagrosh.jdautilities.commandclient.CommandEvent;
+import com.jagrosh.jdautilities.command.Command;
+import com.jagrosh.jdautilities.command.CommandEvent;
 import net.dv8tion.jda.core.Permission;
 import net.dv8tion.jda.core.entities.Message;
 
@@ -61,7 +61,7 @@ public class RerollCommand extends Command {
     }
     
     private void determineWinner(Message m, CommandEvent event) {
-        Giveaway.getWinners(m, wins -> event.replySuccess("The new winner is "+wins.get(0).getAsMention()+"! Congratulations!"), 
+        Giveaway.getSingleWinner(m, wins -> event.replySuccess("The new winner is "+wins.getAsMention()+"! Congratulations!"), 
                 () -> event.replyWarning("I couldn't determine a winner for that giveaway."), bot.getThreadpool());
     }
 }

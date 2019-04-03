@@ -16,16 +16,18 @@
 package com.jagrosh.giveawaybot.commands;
 
 import com.jagrosh.giveawaybot.Constants;
-import com.jagrosh.jdautilities.commandclient.Command;
-import com.jagrosh.jdautilities.commandclient.CommandEvent;
+import com.jagrosh.jdautilities.command.Command;
+import com.jagrosh.jdautilities.command.CommandEvent;
 
 /**
  *
  * @author John Grosh (john.a.grosh@gmail.com)
  */
-public class InviteCommand extends Command {
-
-    public InviteCommand() {
+public class InviteCommand extends Command 
+{
+    private final static String LINK = "\uD83D\uDD17"; // 🔗
+    public InviteCommand() 
+    {
         name = "invite";
         help = "shows how to invite the bot";
         guildOnly = false;
@@ -35,7 +37,7 @@ public class InviteCommand extends Command {
     protected void execute(CommandEvent event) {
         event.reply(Constants.YAY+" Hello! I'm **GiveawayBot**! I help to make giveaways quick and easy!\n"
                 + "You can add me to your server with this link:\n\n"
-                + "\uD83D\uDD17 **<"+Constants.INVITE+">**\n\n"
+                + LINK + " **<"+Constants.INVITE+">**\n\n"
                 + "Check out my commands by typing `!ghelp`");
     }
     

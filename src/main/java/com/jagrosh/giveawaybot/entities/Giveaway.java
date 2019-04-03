@@ -17,6 +17,7 @@ package com.jagrosh.giveawaybot.entities;
 
 import com.jagrosh.giveawaybot.Constants;
 import com.jagrosh.giveawaybot.database.Database;
+import com.jagrosh.giveawaybot.rest.EditedMessageAction;
 import com.jagrosh.giveawaybot.rest.RestJDA;
 import com.jagrosh.giveawaybot.util.FormatUtil;
 import java.awt.Color;
@@ -33,6 +34,7 @@ import net.dv8tion.jda.core.entities.Message;
 import net.dv8tion.jda.core.entities.MessageReaction;
 import net.dv8tion.jda.core.entities.User;
 import net.dv8tion.jda.core.exceptions.ErrorResponseException;
+import net.dv8tion.jda.core.exceptions.RateLimitedException;
 import net.dv8tion.jda.core.utils.MiscUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +43,8 @@ import org.slf4j.LoggerFactory;
  *
  * @author John Grosh (john.a.grosh@gmail.com)
  */
-public class Giveaway {
+public class Giveaway 
+{
     
     public static final Logger LOG = LoggerFactory.getLogger("REST");
     
@@ -51,8 +54,9 @@ public class Giveaway {
     public final Instant end;
     public final int winners;
     public final String prize;
+    public final Status status;
     
-    public Giveaway(long messageId, long channelId, long guildId, Instant end, int winners, String prize)
+    public Giveaway(long messageId, long channelId, long guildId, Instant end, int winners, String prize, Status status)
     {
         this.messageId = messageId;
         this.channelId = channelId;
@@ -60,12 +64,13 @@ public class Giveaway {
         this.end = end;
         this.winners = winners;
         this.prize = prize==null ? null : prize.isEmpty() ? null : prize;
+        this.status = status;
     }
     
     public Message render(Color color, Instant now)
     {
         MessageBuilder mb = new MessageBuilder();
-        boolean close = now.plusSeconds(6).isAfter(end);
+        boolean close = now.plusSeconds(9).isAfter(end);
         mb.append(Constants.YAY).append(close ? " **G I V E A W A Y** " : "   **GIVEAWAY**   ").append(Constants.YAY);
         EmbedBuilder eb = new EmbedBuilder();
         if(close)
@@ -74,7 +79,7 @@ public class Giveaway {
             eb.setColor(Constants.BLURPLE);
         else
             eb.setColor(color);
-        eb.setFooter((winners==1 ? "" : winners+" Winners | ")+"Ends at",null);
+        eb.setFooter((winners==1 ? "" : winners+" winners | ")+"Ends at",null);
         eb.setTimestamp(end);
         eb.setDescription("React with "+Constants.TADA+" to enter!\nTime remaining: "+FormatUtil.secondsToTime(now.until(end, ChronoUnit.SECONDS)));
         if(prize!=null)
@@ -85,33 +90,54 @@ public class Giveaway {
         return mb.build();
     }
     
-    public void update(RestJDA restJDA, Database connector, Instant now)
+    public void update(RestJDA restJDA, Database database, Instant now)
     {
-        restJDA.editMessage(channelId, messageId, render(connector.settings.getSettings(guildId).color, now)).queue(m -> {}, t -> {
-            if(t instanceof ErrorResponseException)
+        update(restJDA, database, now, true);
+    }
+    
+    public void update(RestJDA restJDA, Database database, Instant now, boolean queue)
+    {
+        EditedMessageAction ra = restJDA.editMessage(channelId, messageId, render(database.settings.getSettings(guildId).color, now));
+        if(queue)
+            ra.queue(m -> {}, t -> handleThrowable(t, database));
+        else
+        {
+            try
             {
-                ErrorResponseException e = (ErrorResponseException)t;
-                switch(e.getErrorCode())
-                {
-                    // delete the giveaway, since the bot wont be able to have access again
-                    case 10008: // message not found
-                    case 10003: // channel not found
-                        connector.giveaways.deleteGiveaway(messageId);
-                        break;
-                        
-                    // for now, just keep chugging, maybe we'll get perms back
-                    case 50001: // missing access
-                    case 50013: // missing permissions
-                        break;
-                     
-                    // anything else, print it out
-                    default:
-                        LOG.warn("RestAction returned error: "+e.getErrorCode()+": "+e.getMeaning());
-                }
+                ra.complete(false);
             }
-            else
-                LOG.error("RestAction failure: ["+t+"] "+t.getMessage());
-        });
+            catch(Exception t)
+            {
+                handleThrowable(t, database);
+            }
+        }
+    }
+    
+    private void handleThrowable(Throwable t, Database database)
+    {
+        if(t instanceof ErrorResponseException)
+        {
+            ErrorResponseException e = (ErrorResponseException)t;
+            switch(e.getErrorCode())
+            {
+                // delete the giveaway, since the bot wont be able to have access again
+                case 10008: // message not found
+                case 10003: // channel not found
+                    database.giveaways.deleteGiveaway(messageId);
+                    break;
+
+                // for now, just keep chugging, maybe we'll get perms back
+                case 50001: // missing access
+                case 50013: // missing permissions
+                    break;
+
+                // anything else, print it out
+                default:
+                    LOG.warn("RestAction returned error: "+e.getErrorCode()+": "+e.getMeaning());
+            }
+        }
+        else if(t instanceof RateLimitedException) { /* ignore */ }
+        else LOG.error("RestAction failure: ["+t+"] "+t.getMessage());
     }
     
     public void end(RestJDA restJDA)
@@ -119,14 +145,15 @@ public class Giveaway {
         MessageBuilder mb = new MessageBuilder();
         mb.append(Constants.YAY).append(" **GIVEAWAY ENDED** ").append(Constants.YAY);
         EmbedBuilder eb = new EmbedBuilder();
-        eb.setColor(new Color(1));
+        eb.setColor(new Color(0x36393F));
         eb.setFooter((winners==1 ? "" : winners+" Winners | ")+"Ended at",null);
         eb.setTimestamp(end);
         if(prize!=null)
             eb.setAuthor(prize, null, null);
-        try {
+        try 
+        {
             List<Long> ids = restJDA.getReactionUsers(Long.toString(channelId), Long.toString(messageId), MiscUtil.encodeUTF8(Constants.TADA))
-                    .cache(true).stream().collect(Collectors.toList());
+                    .cache(true).stream().distinct().collect(Collectors.toList());
             List<Long> wins = selectWinners(ids, winners);
             String toSend;
             if(wins.isEmpty())
@@ -149,13 +176,15 @@ public class Giveaway {
                 toSend+="! You won"+(prize==null ? "" : " the **"+prize+"**")+"!";
             }
             mb.setEmbed(eb.build());
-            restJDA.editMessage(channelId, messageId, mb.build()).queue();
-            restJDA.sendMessage(channelId, toSend).queue();
-        } catch(Exception e) {
+            restJDA.editMessage(channelId, messageId, mb.build()).queue(m->{}, f->{});
+            restJDA.sendMessage(channelId, toSend).queue(m->{}, f->{});
+        } 
+        catch(Exception e) 
+        {
             eb.setDescription("Could not determine a winner!");
             mb.setEmbed(eb.build());
-            restJDA.editMessage(channelId, messageId, mb.build()).queue();
-            restJDA.sendMessage(channelId, "A winner could not be determined!").queue();
+            restJDA.editMessage(channelId, messageId, mb.build()).queue(m->{}, f->{});
+            restJDA.sendMessage(channelId, "A winner could not be determined!").queue(m->{}, f->{});
         }
     }
     
@@ -170,32 +199,17 @@ public class Giveaway {
         return winlist;
     }
     
-    public static void getWinners(Message message, Consumer<List<User>> success, Runnable failure, ExecutorService threadpool)
+    public static void getSingleWinner(Message message, Consumer<User> success, Runnable failure, ExecutorService threadpool)
     {
         threadpool.submit(() -> {
             try {
                 MessageReaction mr = message.getReactions().stream().filter(r -> r.getReactionEmote().getName().equals(Constants.TADA)).findAny().orElse(null);
                 List<User> users = new LinkedList<>();
-                mr.getUsers().stream().forEach(u -> users.add(u));
-                users.remove(mr.getJDA().getSelfUser());
+                mr.getUsers().stream().distinct().filter(u -> !u.isBot()).forEach(u -> users.add(u));
                 if(users.isEmpty())
                     failure.run();
                 else
-                {
-                    int wincount;
-                    String[] split = message.getEmbeds().get(0).getFooter().getText().split(" ");
-                    try {
-                        wincount = Integer.parseInt(split[0]);
-                    }catch(NumberFormatException e){
-                        wincount = 1;
-                    }
-                    List<User> wins = new LinkedList<>();
-                    for(int i=0; i<wincount && !users.isEmpty(); i++)
-                    {
-                        wins.add(users.remove((int)(Math.random()*users.size())));
-                    }
-                    success.accept(wins);
-                }
+                    success.accept(users.get((int)(Math.random()*users.size())));
             } catch(Exception e) {
                 failure.run();
             }
